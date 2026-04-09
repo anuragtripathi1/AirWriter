@@ -3,13 +3,19 @@ import mediapipe as mp
 import numpy as np
 import math
 import time
+import os
+
+# Optional stability fix
+os.environ['TF_ENABLE_ONEDNN_OPTS'] = '0'
 
 mp_hands = mp.solutions.hands
 mp_draw = mp.solutions.drawing_utils
 
 hands = mp_hands.Hands(max_num_hands=1)
 
-cap = cv2.VideoCapture(0)
+cap = cv2.VideoCapture(0, cv2.CAP_DSHOW)
+
+cv2.namedWindow("Air Writing Smart", cv2.WINDOW_NORMAL)
 
 canvas = np.zeros((480, 640, 3), dtype=np.uint8)
 
@@ -24,21 +30,23 @@ last_pos = None
 
 draw_color = (255, 0, 255)
 
-# ⏱️ gesture timing
 gesture_start = 0
 current_gesture = None
 GESTURE_DELAY = 0.4
 
+
 def distance(p1, p2):
     return math.hypot(p1[0]-p2[0], p1[1]-p2[1])
 
+
 def fingers_status(lm):
     return [
-        lm[8].y < lm[6].y,   # index
-        lm[12].y < lm[10].y, # middle
-        lm[16].y < lm[14].y, # ring
-        lm[20].y < lm[18].y  # pinky
+        lm[8].y < lm[6].y,
+        lm[12].y < lm[10].y,
+        lm[16].y < lm[14].y,
+        lm[20].y < lm[18].y
     ]
+
 
 def detect_gesture(lm, index_tip, thumb_tip):
     fingers = fingers_status(lm)
@@ -53,12 +61,14 @@ def detect_gesture(lm, index_tip, thumb_tip):
     else:
         return "IDLE"
 
+
 def get_nearest_stroke(point):
     for stroke in strokes:
         for p in stroke["points"]:
             if distance(point, p) < 40:
                 return stroke
     return None
+
 
 def redraw_canvas():
     global canvas
@@ -69,6 +79,7 @@ def redraw_canvas():
         for i in range(1, len(pts)):
             cv2.line(canvas, pts[i-1], pts[i], color, 6)
 
+
 while True:
     success, frame = cap.read()
     if not success:
@@ -78,10 +89,14 @@ while True:
     rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     result = hands.process(rgb)
 
-    # 🎨 color buttons
+    # 🎨 Color buttons
     colors = [(255,0,255), (255,0,0), (0,255,0), (0,0,255)]
     for i, col in enumerate(colors):
         cv2.rectangle(frame, (10+i*60,10), (60+i*60,60), col, -1)
+
+    # ❌ Close Button
+    cv2.rectangle(frame, (580,10), (630,60), (0,0,255), -1)
+    cv2.putText(frame, "X", (595,45), cv2.FONT_HERSHEY_SIMPLEX, 1, (255,255,255), 2)
 
     if result.multi_hand_landmarks:
         for hand in result.multi_hand_landmarks:
@@ -91,7 +106,6 @@ while True:
             index_tip = (int(lm[8].x * w), int(lm[8].y * h))
             thumb_tip = (int(lm[4].x * w), int(lm[4].y * h))
 
-            # 🎯 gesture detection with delay
             detected = detect_gesture(lm, index_tip, thumb_tip)
 
             if detected != current_gesture:
@@ -99,13 +113,20 @@ while True:
                 gesture_start = time.time()
 
             if time.time() - gesture_start > GESTURE_DELAY:
-                
-                # 🎨 color select
+
                 x, y = index_tip
+
+                # 🎨 Color selection
                 if y < 60:
                     for i in range(4):
                         if 10+i*60 < x < 60+i*60:
                             draw_color = colors[i]
+
+                # ❌ Close button click
+                if 580 < x < 630 and 10 < y < 60:
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    exit()
 
                 # ✍️ DRAW
                 if current_gesture == "DRAW":
@@ -140,8 +161,8 @@ while True:
                         dy = index_tip[1] - last_pos[1]
 
                         for i in range(len(selected_stroke["points"])):
-                            x, y = selected_stroke["points"][i]
-                            selected_stroke["points"][i] = (x+dx, y+dy)
+                            x0, y0 = selected_stroke["points"][i]
+                            selected_stroke["points"][i] = (x0+dx, y0+dy)
 
                         last_pos = index_tip
                         redraw_canvas()
@@ -169,14 +190,16 @@ while True:
 
             mp_draw.draw_landmarks(frame, hand, mp_hands.HAND_CONNECTIONS)
 
-    # clean overlay
+    # ✅ Clean overlay
     frame_with_canvas = frame.copy()
     mask = canvas.astype(bool)
     frame_with_canvas[mask] = canvas[mask]
 
     cv2.imshow("Air Writing Smart", frame_with_canvas)
 
-    if cv2.waitKey(1) & 0xFF == 27:
+    # ⌨️ Keyboard exit
+    key = cv2.waitKey(1) & 0xFF
+    if key == 27 or key == ord('q'):
         break
 
 cap.release()
